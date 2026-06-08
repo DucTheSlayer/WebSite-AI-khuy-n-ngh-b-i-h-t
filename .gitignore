@@ -1,0 +1,16 @@
+data/
+backend/target/
+__pycache__/
+node_modules/
+data/
+backend/target/
+__pycache__/
+.venv/
+.env
+node_modules/
+data/
+backend/target/
+__pycache__/
+.venv/
+venv/
+.env
