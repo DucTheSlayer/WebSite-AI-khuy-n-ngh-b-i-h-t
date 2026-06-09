@@ -7,136 +7,90 @@ import {
   submitFeedback,
   resetFeedback,
   searchYoutubeVideo,
-  getBlendRecommendations
+  getBlendRecommendations,
+  login as apiLogin,
+  register as apiRegister,
+  getMe as apiGetMe,
+  logout as apiLogout
 } from './api'
+import {
+  cleanDisplayText,
+  formatDemoUsers,
+  getMockCoverStyle,
+  getFirstLetter
+} from './utils'
 
 const DEMO_USER_LIMIT = 24
 const WEB_USER_ID = 'demo_web_user'
 
-const FRIEND_NAMES = [
-  'Alex Mercer', 'Sarah Connor', 'Bruce Wayne', 'Clark Kent',
-  'Peter Parker', 'Selina Kyle', 'Tony Stark', 'Natasha Romanoff',
-  'Steve Rogers', 'Wanda Maximoff', 'Luke Skywalker', 'Leia Organa',
-  'Han Solo', 'Frodo Baggins', 'Samwise Gamgee', 'Harry Potter',
-  'Hermione Granger', 'Ron Weasley', 'Sherlock Holmes', 'John Watson',
-  'Michael Scott', 'Jessica Alba', 'David Miller', 'Emily Watson'
-]
-
-function cleanDisplayText(value = '') {
-  if (!/[ÃÂâ]/.test(value)) {
-    return value
-  }
-  try {
-    const bytes = Uint8Array.from([...value].map((character) => character.charCodeAt(0) & 255))
-    return new TextDecoder('utf-8').decode(bytes)
-  } catch {
-    return value
-  }
-}
-
-function formatDemoUsers(users) {
-  return [...users]
-    .sort((left, right) => (right.interactions ?? 0) - (left.interactions ?? 0))
-    .map((user, index) => {
-      const displayName = FRIEND_NAMES[index % FRIEND_NAMES.length] || `Friend ${index + 1}`
-      const topArtists = (user.topArtists ?? []).map(cleanDisplayText).filter(Boolean)
-      
-      // Determine listening status (randomly offline or listening to one of their top artists)
-      // To make it deterministic, we hash the userId
-      let hash = 0
-      const uid = user.userId || ''
-      for (let i = 0; i < uid.length; i++) {
-        hash = uid.charCodeAt(i) + ((hash << 5) - hash)
-      }
-      
-      const isOnline = Math.abs(hash) % 10 < 8 // 80% online
-      let listeningStatus = 'Offline'
-      if (isOnline && topArtists.length > 0) {
-        const artistIdx = Math.abs(hash * 31) % topArtists.length
-        listeningStatus = `Listening to ${topArtists[artistIdx]}`
-      } else if (isOnline) {
-        listeningStatus = 'Online'
-      }
-
-      return {
-        ...user,
-        displayName,
-        listeningStatus,
-        shortId: user.userId?.slice(0, 10) ?? '',
-        topArtists,
-      }
-    })
-}
-
-// Generate CSS Gradient Cover based on track name / track ID
-function getMockCoverStyle(trackId, title = 'Song') {
-  if (!trackId) return { background: 'linear-gradient(135deg, #282828, #121212)' }
-  let hash = 0
-  for (let i = 0; i < trackId.length; i++) {
-    hash = trackId.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const h1 = Math.abs(hash) % 360
-  const h2 = Math.abs(hash * 31) % 360
-  const c1 = `hsl(${h1}, 70%, 45%)`
-  const c2 = `hsl(${h2}, 80%, 20%)`
-  return {
-    background: `linear-gradient(135deg, ${c1}, ${c2})`,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: '20px',
-    textShadow: '0 2px 4px rgba(0,0,0,0.6)',
-    borderRadius: '4px',
-    userSelect: 'none',
-    fontFamily: '"Space Grotesk", sans-serif'
-  }
-}
-
-function getFirstLetter(title) {
-  return String(title || 'S').trim().charAt(0).toUpperCase()
-}
 
 export default function App() {
-  // Navigation tabs: 'home' | 'search' | 'library'
+  // --- 1. KHAI BÁO CÁC STATE (TRẠNG THÁI) TRONG REACT ---
+  // useState dùng để lưu trữ dữ liệu có thể thay đổi và yêu cầu giao diện vẽ lại (re-render) khi dữ liệu đó thay đổi.
+
+  // Tab hiện tại đang mở trên thanh menu bên trái ('home', 'search', 'users', 'liked')
   const [activeTab, setActiveTab] = useState('home')
   
+  // Từ khóa tìm kiếm bài hát do người dùng nhập vào ô tìm kiếm
   const [query, setQuery] = useState('')
+  // Từ khóa tìm kiếm bạn bè trong tab Friend Activity
   const [userQuery, setUserQuery] = useState('')
+  // Danh sách bài hát kết quả tìm kiếm được trả về từ Backend Spring Boot
   const [songs, setSongs] = useState([])
+  // Danh sách bài hát phổ biến hiển thị ở trang chủ mặc định
   const [popularSongs, setPopularSongs] = useState([])
+  // Danh sách người dùng Last.fm giả lập để demo tính năng gợi ý
   const [demoUsers, setDemoUsers] = useState([])
   
+  // Bài hát đang được chọn để xem danh sách gợi ý liên quan (Song Mode)
   const [selectedSong, setSelectedSong] = useState(null)
+  // Bạn bè đang được chọn để xem danh sách gợi ý cá nhân hóa (User Mode)
   const [selectedUser, setSelectedUser] = useState(null)
+  // Danh sách các bài hát được gợi ý tương ứng (Song Mode / User Mode / Blend Mode)
   const [recommendations, setRecommendations] = useState([])
+  // Trạng thái bật/tắt chế độ Blend (trộn gu nhạc giữa bạn và 1 người bạn)
   const [isBlendMode, setIsBlendMode] = useState(false)
+  // Điểm số tương thích âm nhạc (%) giữa bạn và người bạn được chọn trong chế độ Blend
   const [blendMatchScore, setBlendMatchScore] = useState(0)
   
-  // Loading states
-  const [songsLoading, setSongsLoading] = useState(false)
-  const [usersLoading, setUsersLoading] = useState(false)
-  const [recommendLoading, setRecommendLoading] = useState(false)
-  const [error, setError] = useState('')
+  // --- CÁC TRẠNG THÁI HIỂN THỊ LOADING (ĐANG TẢI DỮ LIỆU) ---
+  const [songsLoading, setSongsLoading] = useState(false) // Đang tìm kiếm bài hát
+  const [usersLoading, setUsersLoading] = useState(false)   // Đang tải danh sách bạn bè
+  const [recommendLoading, setRecommendLoading] = useState(false) // Đang chạy thuật toán gợi ý AI
+  const [error, setError] = useState('') // Lưu trữ thông điệp lỗi nếu có lỗi API xảy ra
   
-  // Real-time Player State
-  const [playingSong, setPlayingSong] = useState(null)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [playProgress, setPlayProgress] = useState(0) // percentage
-  const [playSeconds, setPlaySeconds] = useState(0)
-  const [playDuration, setPlayDuration] = useState(180) // total seconds of song
-  const [volume, setVolume] = useState(70)
-  const [isMuted, setIsMuted] = useState(false)
+  // --- TRẠNG THÁI TRÌNH PHÁT NHẠC PLAYER (BOTTOM BAR) CHẠY THỜI GIAN THỰC ---
+  const [playingSong, setPlayingSong] = useState(null) // Bài hát hiện đang được phát nhạc
+  const [isPlaying, setIsPlaying] = useState(false)     // Nhạc đang phát (true) hay tạm dừng (false)
+  const [playProgress, setPlayProgress] = useState(0)  // Tiến trình chạy bài hát dạng % (0 - 100)
+  const [playSeconds, setPlaySeconds] = useState(0)    // Số giây hiện tại của bài hát đang phát
+  const [playDuration, setPlayDuration] = useState(180) // Tổng số giây của bài hát hiện tại
+  const [volume, setVolume] = useState(70)             // Âm lượng trình phát nhạc (0 - 100)
+  const [isMuted, setIsMuted] = useState(false)         // Trạng thái tắt tiếng (Mute)
   
-  // User Feedback State (Liked songs in this session)
+  // --- PHẢN HỒI GU NHẠC CỦA TÀI KHOẢN ĐANG ĐĂNG NHẬP ---
+  // Sử dụng đối tượng Set trong JavaScript để lưu danh sách ID bài hát đã Thích (Like) hoặc Ghét (Dislike) độc nhất.
   const [likedSongIds, setLikedSongIds] = useState(new Set())
   const [dislikedSongIds, setDislikedSongIds] = useState(new Set())
 
-  // --- YOUTUBE PLAYER API INTEGRATION ---
+  // --- TRẠNG THÁI ĐĂNG NHẬP / THÀNH VIÊN ---
+  const [currentUser, setCurrentUser] = useState(null) // Thông tin tài khoản người dùng đang đăng nhập
+  const [personalRecommendations, setPersonalRecommendations] = useState([]) // Danh sách 8 bài hát gợi ý riêng cho bạn ở trang chủ
+  
+  // Trạng thái hiển thị Form đăng nhập/đăng ký ('login' | 'register' | null nếu đóng)
+  const [authModalOpen, setAuthModalOpen] = useState(null)
+  const [authError, setAuthError] = useState('') // Lỗi đăng nhập hoặc đăng ký
+  // Các ô input trong form xác thực
+  const [authUsername, setAuthUsername] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authFullName, setAuthFullName] = useState('')
+
+  // --- TÍCH HỢP YOUTUBE PLAYER API QUA IFRAME CHẠY NGẦM ---
   const [playerReady, setPlayerReady] = useState(false)
 
-  // Load YouTube Iframe API on Mount
+  // useEffect này chạy 1 lần duy nhất khi ứng dụng bắt đầu (Component Mount) để nhúng file script của YouTube Iframe API vào HTML.
+  // Điều này cho phép chúng ta điều khiển phát nhạc, tua nhanh, tăng giảm âm lượng thông qua mã JavaScript.
   useEffect(() => {
     if (!window.YT) {
       const tag = document.createElement('script')
@@ -146,23 +100,61 @@ export default function App() {
     }
   }, [])
 
-  // Create/Update YouTube Player when playingSong changes
+  // Tự động kiểm tra Token đăng nhập trong localStorage khi ứng dụng khởi chạy.
+  // Nếu có token hợp lệ, hệ thống sẽ tự động gọi API lấy thông tin người dùng và gu nhạc của họ mà không bắt đăng nhập lại.
+  useEffect(() => {
+    const token = localStorage.getItem('token')
+    if (token) {
+      apiGetMe()
+        .then((userData) => {
+          setCurrentUser(userData)
+          // Đọc danh sách đã like và dislike từ tài khoản lưu trữ
+          if (userData.likedSongIds) {
+            setLikedSongIds(new Set(userData.likedSongIds))
+          }
+          if (userData.dislikedSongIds) {
+            setDislikedSongIds(new Set(userData.dislikedSongIds))
+          }
+          // Tải danh sách gợi ý dành riêng cho tài khoản này
+          loadPersonalRecommendations(userData.username)
+        })
+        .catch(() => {
+          // Token hết hạn hoặc không hợp lệ -> Xóa bỏ token để tránh lỗi vòng lặp
+          localStorage.removeItem('token')
+        })
+    }
+  }, [])
+
+  // Hàm gọi API lấy danh sách bài hát gợi ý cá nhân hóa dựa trên gu nhạc hiện tại của người dùng.
+  async function loadPersonalRecommendations(username) {
+    try {
+      const result = await getUserRecommendations(username, 8)
+      setPersonalRecommendations(result)
+    } catch (err) {
+      console.error("Không thể tải danh sách gợi ý cá nhân hóa", err)
+    }
+  }
+
+  // Tự động tìm kiếm video trên YouTube và khởi tạo/cập nhật trình phát nhạc YouTube mỗi khi bài hát đang nghe (playingSong) thay đổi.
   useEffect(() => {
     if (!playingSong) return
 
+    // Tạo từ khóa tìm kiếm: "Tên bài hát Tên ca sĩ" để đảm bảo tìm đúng MV trên YouTube
     const queryStr = `${playingSong.trackName} ${playingSong.artists || playingSong.artist}`
 
     async function loadSongVideo() {
       setError('')
       try {
+        // Gọi API cào (scrape) YouTube để lấy video_id đầu tiên khớp với từ khóa
         const videoId = await searchYoutubeVideo(queryStr)
         if (!videoId) {
-          setError('Could not find corresponding YouTube video.')
+          setError('Không tìm thấy video tương ứng trên YouTube.')
           return
         }
 
+        // Hàm khởi tạo đối tượng YouTube Player điều khiển Iframe
         function initYoutubePlayer() {
-          // If player already exists, load new videoId
+          // Nếu trình phát đã được tạo từ trước, chỉ cần yêu cầu phát video mới
           if (window.ytPlayerInstance && typeof window.ytPlayerInstance.loadVideoById === 'function') {
             window.ytPlayerInstance.loadVideoById({
               videoId: videoId,
@@ -172,28 +164,31 @@ export default function App() {
             return
           }
 
-          // Initialize player into the target div
+          // Tạo mới đối tượng YouTube Player nhắm vào thẻ div có id 'yt-player-iframe'
           window.ytPlayerInstance = new window.YT.Player('yt-player-iframe', {
             height: '100%',
             width: '100%',
             videoId: videoId,
             playerVars: {
-              autoplay: 1,
-              controls: 1, // Show controls for visualization
-              rel: 0,
+              autoplay: 1,      // Tự động phát video ngay khi tải xong
+              controls: 1,      // Hiện thanh điều khiển chuẩn của YouTube để hỗ trợ trực quan
+              rel: 0,           // Không hiển thị video liên quan từ kênh khác
               showinfo: 0,
-              enablejsapi: 1,
+              enablejsapi: 1,   // Bật API JavaScript để điều khiển
               origin: window.location.origin
             },
             events: {
+              // Khi trình phát đã sẵn sàng hoạt động
               onReady: (event) => {
                 setPlayerReady(true)
+                // Đồng bộ âm lượng hiện tại
                 event.target.setVolume(isMuted ? 0 : volume)
                 event.target.playVideo()
                 setIsPlaying(true)
               },
+              // Khi trạng thái video thay đổi (Đang phát, tạm dừng, kết thúc)
               onStateChange: (event) => {
-                // event.data: 1 = PLAYING, 2 = PAUSED, 0 = ENDED
+                // event.data: 1 = Đang phát (PLAYING), 2 = Tạm dừng (PAUSED), 0 = Kết thúc (ENDED)
                 if (event.data === 1) {
                   setIsPlaying(true)
                   const dur = event.target.getDuration()
@@ -210,21 +205,22 @@ export default function App() {
           })
         }
 
+        // Đảm bảo Script YouTube API đã sẵn sàng rồi mới khởi tạo player
         if (window.YT && window.YT.Player) {
           initYoutubePlayer()
         } else {
           window.onYouTubeIframeAPIReady = initYoutubePlayer
         }
       } catch (err) {
-        console.error("Failed to load YouTube video", err)
-        setError("Error loading YouTube media.")
+        console.error("Không thể phát video YouTube", err)
+        setError("Lỗi khi tải phương tiện truyền thông từ YouTube.")
       }
     }
 
     loadSongVideo()
   }, [playingSong])
 
-  // Sync Play/Pause with YouTube Player
+  // Đồng bộ nút Phát / Tạm dừng trên giao diện Web với trình phát YouTube
   useEffect(() => {
     if (window.ytPlayerInstance && typeof window.ytPlayerInstance.playVideo === 'function') {
       if (isPlaying) {
@@ -235,7 +231,7 @@ export default function App() {
     }
   }, [isPlaying])
 
-  // Sync Volume with YouTube Player
+  // Đồng bộ thanh âm lượng trên giao diện Web với trình phát YouTube
   useEffect(() => {
     if (window.ytPlayerInstance && typeof window.ytPlayerInstance.setVolume === 'function') {
       if (isMuted) {
@@ -246,7 +242,8 @@ export default function App() {
     }
   }, [volume, isMuted])
 
-  // Pull actual play time from YouTube Player
+  // Chạy một đồng hồ đếm thời gian (Interval) để cập nhật thời gian đang phát hiện tại (giây, %) 
+  // của video từ trình phát YouTube lên thanh tiến trình (progress bar) của giao diện Web cứ mỗi 500ms.
   useEffect(() => {
     let interval = null
     if (isPlaying && window.ytPlayerInstance && typeof window.ytPlayerInstance.getCurrentTime === 'function') {
@@ -258,7 +255,7 @@ export default function App() {
           setPlayDuration(duration)
           setPlayProgress((currentTime / duration) * 100)
         } catch (e) {
-          // ignore
+          // Bỏ qua lỗi nhỏ nếu iframe chưa render kịp
         }
       }, 500)
     }
@@ -267,7 +264,7 @@ export default function App() {
     }
   }, [isPlaying])
 
-  // Load Popular Songs & Demo Users on Mount
+  // Tải dữ liệu ban đầu khi ứng dụng khởi chạy (Bài hát phổ biến trang chủ và tài khoản demo Last.fm)
   useEffect(() => {
     let active = true
     async function loadInitialData() {
@@ -277,7 +274,7 @@ export default function App() {
           setPopularSongs(popResult.slice(0, 8))
         }
       } catch (err) {
-        console.error("Failed to load popular songs", err)
+        console.error("Lỗi tải bài hát phổ biến ban đầu", err)
       }
 
       setUsersLoading(true)
@@ -287,7 +284,7 @@ export default function App() {
           setDemoUsers(formatDemoUsers(usersResult))
         }
       } catch (err) {
-        console.error("Failed to load demo users", err)
+        console.error("Lỗi tải danh sách người dùng demo", err)
       } finally {
         if (active) setUsersLoading(false)
       }
@@ -298,7 +295,8 @@ export default function App() {
     }
   }, [])
 
-  // Song Search with Debounce
+  // Xử lý ô Tìm kiếm bài hát tích hợp kỹ thuật Debounce (Chờ 250ms sau khi người dùng dừng gõ phím mới gọi API).
+  // Việc này giúp tránh gửi hàng chục yêu cầu API vô ích lên máy chủ khi người dùng đang gõ nhanh.
   useEffect(() => {
     if (!query) {
       setSongs([])
@@ -315,7 +313,7 @@ export default function App() {
         }
       } catch (loadError) {
         if (active) {
-          setError('Could not load songs from Spring Boot API.')
+          setError('Không thể kết nối tới máy chủ Spring Boot API.')
         }
       } finally {
         if (active) {
@@ -330,19 +328,19 @@ export default function App() {
     }
   }, [query])
 
-  // Handle Play/Pause Click
+  // Xử lý hành động bấm nút phát / tạm dừng một bài hát
   function handlePlaySong(song) {
     if (playingSong?.trackId === song.trackId) {
-      setIsPlaying(!isPlaying)
+      setIsPlaying(!isPlaying) // Bật/tắt nhạc nếu bài đang phát trùng với bài vừa click
     } else {
-      setPlayingSong(song)
+      setPlayingSong(song)     // Phát bài mới hoàn toàn
       setIsPlaying(true)
       setPlayProgress(0)
       setPlaySeconds(0)
     }
   }
 
-  // Handle Song Selection for Recommendations
+  // Xử lý khi người dùng chọn 1 bài hát cụ thể để tìm các bài hát tương tự (Song Mode)
   async function handleSelectSong(song) {
     setIsBlendMode(false)
     setBlendMatchScore(0)
@@ -353,20 +351,20 @@ export default function App() {
     try {
       const result = await getRecommendations(song.trackId)
       setRecommendations(result)
-      // Set to play as well
+      // Tự động phát bài hát đó trên trình phát nhạc luôn
       setPlayingSong(song)
       setIsPlaying(true)
       setPlayProgress(0)
       setPlaySeconds(0)
     } catch (loadError) {
       setRecommendations([])
-      setError('Could not load recommendations.')
+      setError('Không thể tải bài hát gợi ý.')
     } finally {
       setRecommendLoading(false)
     }
   }
 
-  // Handle User Selection for Personalized Recommendations
+  // Xử lý khi chọn một người bạn Last.fm để xem gu nhạc gợi ý cá nhân hóa của họ (User Mode)
   async function handleSelectUser(user) {
     setIsBlendMode(false)
     setBlendMatchScore(0)
@@ -379,62 +377,139 @@ export default function App() {
       setRecommendations(result)
     } catch (loadError) {
       setRecommendations([])
-      setError('Could not load personalized recommendations.')
+      setError('Không thể tải danh sách gợi ý cá nhân hóa cho bạn bè.')
     } finally {
       setRecommendLoading(false)
     }
   }
 
+  // Xử lý sự kiện đăng nhập tài khoản người dùng
+  async function handleAuthLogin(e) {
+    e.preventDefault()
+    setAuthError('')
+    try {
+      const data = await apiLogin(authUsername, authPassword)
+      setCurrentUser(data)
+      // Đồng bộ danh sách like/dislike từ máy chủ về giao diện web
+      if (data.likedSongIds) {
+        setLikedSongIds(new Set(data.likedSongIds))
+      }
+      if (data.dislikedSongIds) {
+        setDislikedSongIds(new Set(data.dislikedSongIds))
+      }
+      // Tải gợi ý riêng cho họ hiển thị trên trang chủ
+      loadPersonalRecommendations(data.username)
+      setAuthModalOpen(null)
+      setAuthUsername('')
+      setAuthPassword('')
+    } catch (err) {
+      setAuthError(err.message || 'Đăng nhập thất bại!')
+    }
+  }
+
+  // Xử lý sự kiện đăng ký tài khoản mới
+  async function handleAuthRegister(e) {
+    e.preventDefault()
+    setAuthError('')
+    try {
+      const data = await apiRegister(authUsername, authEmail, authPassword, authFullName)
+      setCurrentUser(data)
+      setLikedSongIds(new Set())
+      setDislikedSongIds(new Set())
+      setPersonalRecommendations([])
+      setAuthModalOpen(null)
+      setAuthUsername('')
+      setAuthPassword('')
+      setAuthEmail('')
+      setAuthFullName('')
+    } catch (err) {
+      setAuthError(err.message || 'Đăng ký thất bại!')
+    }
+  }
+
+  // Xử lý sự kiện đăng xuất tài khoản
+  function handleLogout() {
+    apiLogout()
+    setCurrentUser(null)
+    setLikedSongIds(new Set())
+    setDislikedSongIds(new Set())
+    setPersonalRecommendations([])
+    setSelectedSong(null)
+    setSelectedUser(null)
+    setRecommendations([])
+    setIsBlendMode(false)
+  }
+
+  // Xử lý tạo Playlist chung (Taste Blend Playlist) giữa bạn và người bạn Last.fm được chọn
   async function handleCreateBlend(user) {
+    if (!currentUser) {
+      setAuthError('Vui lòng đăng nhập để trộn gu nhạc (Taste Blend) cùng bạn bè!')
+      setAuthModalOpen('login')
+      return
+    }
     setIsBlendMode(true)
     setSelectedUser(user)
     setSelectedSong(null)
     setRecommendLoading(true)
     setError('')
     try {
-      const result = await getBlendRecommendations(WEB_USER_ID, user.userId)
+      const result = await getBlendRecommendations(currentUser.username, user.userId)
       setRecommendations(result.recommendations || [])
       setBlendMatchScore(result.match_score ?? 0.5)
     } catch (loadError) {
       setRecommendations([])
-      setError('Could not load blend recommendations.')
+      setError('Không thể tải danh sách gợi ý kết hợp (Blend).')
     } finally {
       setRecommendLoading(false)
     }
   }
 
-  // Handle Like/Dislike Feedback (Real-time Feedback Loop)
+  // Xử lý hành động Like hoặc Dislike một bài hát (Cơ chế phản hồi thời gian thực - Real-time Feedback Loop).
+  // Khi người dùng like/dislike, hệ thống lưu xuống cơ sở dữ liệu Spring Boot, đồng bộ sang mô hình AI FastAPI,
+  // sau đó lập tức truy vấn lại danh sách gợi ý mới nhất loại bỏ các bài hát bị ghét và bổ sung bài mới.
   async function handleFeedback(song, type) {
-    const userId = WEB_USER_ID // Always submit feedback for the web guest user
+    if (!currentUser) {
+      setAuthError('Vui lòng đăng nhập để thể hiện sở thích âm nhạc của bạn!')
+      setAuthModalOpen('login')
+      return
+    }
+    
+    const userId = currentUser.username
     const trackId = song.trackId
 
     try {
+      // Gọi API gửi lượt phản hồi (LIKE hoặc DISLIKE) lên backend Spring Boot
       await submitFeedback(userId, trackId, type)
       
-      // Update local state
+      // Tạo bản sao mới của các Set để React nhận diện được sự thay đổi trạng thái và cập nhật lại giao diện
+      const updatedLikes = new Set(likedSongIds)
+      const updatedDislikes = new Set(dislikedSongIds)
+      
       if (type === 'LIKE') {
-        const newLikes = new Set(likedSongIds)
-        if (newLikes.has(trackId)) {
-          newLikes.delete(trackId)
+        if (updatedLikes.has(trackId)) {
+          updatedLikes.delete(trackId) // Bỏ thích nếu click lại vào nút thích
         } else {
-          newLikes.add(trackId)
-          dislikedSongIds.delete(trackId)
+          updatedLikes.add(trackId)
+          updatedDislikes.delete(trackId) // Nếu đang ghét mà chuyển sang thích thì xóa khỏi danh sách ghét
         }
-        setLikedSongIds(newLikes)
       } else {
-        const newDislikes = new Set(dislikedSongIds)
-        if (newDislikes.has(trackId)) {
-          newDislikes.delete(trackId)
+        // Hành động DISLIKE
+        if (updatedDislikes.has(trackId)) {
+          updatedDislikes.delete(trackId) // Bỏ ghét nếu click lại vào nút ghét
         } else {
-          newDislikes.add(trackId)
-          likedSongIds.delete(trackId)
+          updatedDislikes.add(trackId)
+          updatedLikes.delete(trackId) // Nếu đang thích mà bấm ghét thì xóa khỏi danh sách thích
         }
-        setDislikedSongIds(newDislikes)
       }
+      setLikedSongIds(updatedLikes)
+      setDislikedSongIds(updatedDislikes)
 
-      // Re-trigger recommendation query
+      // Tải lại danh sách 8 bài gợi ý Made For You ở trang chủ
+      loadPersonalRecommendations(userId)
+
+      // Đồng thời chạy lại truy vấn gợi ý ở màn hình chính (nếu đang xem dở) để bài hát bị dislike biến mất lập tức
       if (isBlendMode && selectedUser) {
-        const result = await getBlendRecommendations(WEB_USER_ID, selectedUser.userId)
+        const result = await getBlendRecommendations(userId, selectedUser.userId)
         setRecommendations(result.recommendations || [])
         setBlendMatchScore(result.match_score ?? 0.5)
       } else if (selectedUser) {
@@ -445,23 +520,30 @@ export default function App() {
         setRecommendations(result)
       }
     } catch (err) {
-      console.error("Failed to submit feedback", err)
-      setError("Failed to record feedback.")
+      console.error("Gửi phản hồi thất bại", err)
+      setError("Không thể ghi nhận phản hồi âm nhạc.")
     }
   }
 
-  // Reset all feedbacks for current profile
+  // Reset toàn bộ gu nhạc của tài khoản hiện tại về trạng thái ban đầu (Xóa hết likes/dislikes)
   async function handleResetFeedback() {
-    const userId = WEB_USER_ID // Always reset the guest user's preferences
+    if (!currentUser) {
+      setAuthError('Vui lòng đăng nhập để quản lý tùy chọn sở thích.')
+      setAuthModalOpen('login')
+      return
+    }
+    const userId = currentUser.username
     try {
       await resetFeedback(userId)
+      // Làm trống các State cục bộ ở frontend
       setLikedSongIds(new Set())
       setDislikedSongIds(new Set())
+      setPersonalRecommendations([])
       setError('')
       
-      // Reload recommendations
+      // Tải lại dữ liệu gợi ý rỗng/mặc định sau khi reset
       if (isBlendMode && selectedUser) {
-        const result = await getBlendRecommendations(WEB_USER_ID, selectedUser.userId)
+        const result = await getBlendRecommendations(userId, selectedUser.userId)
         setRecommendations(result.recommendations || [])
         setBlendMatchScore(result.match_score ?? 0.5)
       } else if (selectedUser) {
@@ -472,15 +554,21 @@ export default function App() {
         setRecommendations(result)
       }
     } catch (err) {
-      console.error("Failed to reset feedback", err)
+      console.error("Reset gu nhạc thất bại", err)
     }
   }
 
+  // --- 2. CÁC HÀM TÍNH TOÁN TỐI ƯU HÓA (useMemo) ---
+  // useMemo giúp ghi nhớ kết quả tính toán và chỉ tính lại khi một trong các dependency thay đổi.
+  // Tránh việc bộ lọc chạy lại mỗi khi người dùng click linh tinh hoặc tăng giảm âm lượng.
+
+  // visibleDemoUsers: Danh sách bạn bè được hiển thị sau khi lọc qua từ khóa tìm kiếm bạn bè (userQuery)
   const visibleDemoUsers = useMemo(() => {
     const normalizedQuery = userQuery.trim().toLowerCase()
     if (!normalizedQuery) return demoUsers
 
     return demoUsers.filter((user) => {
+      // Tìm kiếm bạn bè qua: tên hiển thị, ID Last.fm hoặc tên các ca sĩ/nghệ sĩ họ thích nghe nhất
       const searchableProfile = [
         user.displayName,
         user.userId,
@@ -490,9 +578,12 @@ export default function App() {
 
       return searchableProfile.includes(normalizedQuery)
     })
-  }, [demoUsers, userQuery])
+  }, [demoUsers, userQuery]) // Chỉ tính toán lại khi danh sách demoUsers hoặc từ khóa userQuery thay đổi
 
-  // Mock Audio Features for current playing/selected song
+  // mockAudioFeatures: Tự động giả lập 5 thông số âm thanh (Acoustic Signature) cho bài hát đang chọn/phát.
+  // Phân tích các thông số: Danceability (Độ dễ nhảy), Energy (Năng lượng), Valence (Tâm trạng tích cực), 
+  // Acousticness (Độ mộc mạc), Tempo (Nhịp điệu BPM).
+  // Được giả lập bằng mã băm (hash) của trackId để đảm bảo bài hát đó khi tải lại thì các chỉ số vẫn giữ nguyên.
   const mockAudioFeatures = useMemo(() => {
     const song = selectedSong || playingSong
     if (!song) return null
@@ -510,9 +601,10 @@ export default function App() {
       acousticness: Math.abs((hash * 19) % 80 + 10) / 100,
       tempo: Math.abs((hash * 29) % 80 + 80),
     }
-  }, [selectedSong, playingSong])
+  }, [selectedSong, playingSong]) // Chỉ tính toán lại khi bài hát đang chọn hoặc đang phát thay đổi
 
-  // Formatting helper for time (seconds -> MM:SS)
+  // Hàm phụ trợ định dạng thời gian giây thành định dạng MM:SS để hiển thị thời gian bài hát phát.
+  // Ví dụ: 125 giây -> "2:05"
   function formatTime(seconds) {
     const m = Math.floor(seconds / 60)
     const s = Math.floor(seconds % 60)
@@ -553,6 +645,41 @@ export default function App() {
             <span className="icon">👥</span> Friend Activity
           </button>
         </nav>
+
+        {currentUser ? (
+          <div className="sidebar-user-panel">
+            <div className="user-info-brief">
+              <div className="user-avatar-small">
+                {currentUser.fullName ? currentUser.fullName.charAt(0).toUpperCase() : currentUser.username.charAt(0).toUpperCase()}
+              </div>
+              <div className="user-text-brief">
+                <span className="user-username-badge">{currentUser.fullName || currentUser.username}</span>
+                <span className="user-role-badge">Member</span>
+              </div>
+            </div>
+            <button 
+              type="button" 
+              className="logout-btn-icon" 
+              title="Logout"
+              onClick={handleLogout}
+            >
+              🚪
+            </button>
+          </div>
+        ) : (
+          <div style={{ padding: '0 8px', margin: '10px 0' }}>
+            <button 
+              type="button" 
+              className="login-prompt-sidebar-btn"
+              onClick={() => {
+                setAuthError('')
+                setAuthModalOpen('login')
+              }}
+            >
+              👤 Sign In to Like
+            </button>
+          </div>
+        )}
 
         {/* Mini Library info / Liked songs count */}
         <div className="sidebar-library">
@@ -680,6 +807,42 @@ export default function App() {
           {/* TAB 1: HOME PAGE */}
           {activeTab === 'home' && (
             <div className="tab-pane home-pane">
+              {currentUser && (
+                <section className="dashboard-section animate-fade-in">
+                  <h2>Made For {currentUser.fullName || currentUser.username}</h2>
+                  {recommendLoading && <p className="loading-text">Generating recommendations...</p>}
+                  {personalRecommendations.length > 0 ? (
+                    <div className="premium-grid">
+                      {personalRecommendations.map((song) => (
+                        <div key={song.trackId} className="song-grid-card" onClick={() => handleSelectSong(song)}>
+                          <div className="grid-card-cover-wrapper">
+                            <div className="grid-card-cover" style={getMockCoverStyle(song.trackId, song.trackName)}>
+                              {getFirstLetter(song.trackName)}
+                            </div>
+                            <button 
+                              type="button" 
+                              className="play-grid-btn"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handlePlaySong(song)
+                              }}
+                            >
+                              {playingSong?.trackId === song.trackId && isPlaying ? '⏸️' : '▶️'}
+                            </button>
+                          </div>
+                          <div className="grid-card-info">
+                            <strong>{song.trackName}</strong>
+                            <p>{song.artists}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    !recommendLoading && <p className="empty-state">Like some songs to get personalized recommendations here!</p>
+                  )}
+                </section>
+              )}
+
               <section className="dashboard-section">
                 <h2>Good evening</h2>
                 <div className="quick-grid">
@@ -773,7 +936,13 @@ export default function App() {
                       </thead>
                       <tbody>
                         {songs.map((song, index) => (
-                          <tr key={song.trackId} onClick={() => handleSelectSong(song)} className={selectedSong?.trackId === song.trackId ? 'selected-row' : ''}>
+                          <tr 
+                            key={song.trackId} 
+                            onClick={() => {
+                              if (!dislikedSongIds.has(song.trackId)) handleSelectSong(song)
+                            }} 
+                            className={`${selectedSong?.trackId === song.trackId ? 'selected-row' : ''} ${dislikedSongIds.has(song.trackId) ? 'disliked-row' : ''}`}
+                          >
                             <td className="row-number-col">
                               <span className="index-num">{index + 1}</span>
                               <button 
@@ -806,9 +975,18 @@ export default function App() {
                                 <button 
                                   type="button" 
                                   className={`action-btn-heart ${likedSongIds.has(song.trackId) ? 'liked' : ''}`}
+                                  title="Like this song"
                                   onClick={() => handleFeedback(song, 'LIKE')}
                                 >
                                   💚
+                                </button>
+                                <button 
+                                  type="button" 
+                                  className={`action-btn-dislike ${dislikedSongIds.has(song.trackId) ? 'active' : ''}`}
+                                  title="Dislike this song"
+                                  onClick={() => handleFeedback(song, 'DISLIKE')}
+                                >
+                                  {dislikedSongIds.has(song.trackId) ? '🚫' : '👎'}
                                 </button>
                               </div>
                             </td>
@@ -978,7 +1156,7 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {recommendations.map((item, index) => {
+                          {recommendations.filter(item => !dislikedSongIds.has(item.trackId)).map((item, index) => {
                             const isLiked = likedSongIds.has(item.trackId)
                             const isDisliked = dislikedSongIds.has(item.trackId)
                             return (
@@ -1146,9 +1324,18 @@ export default function App() {
               <button 
                 type="button" 
                 className={`player-heart-btn ${likedSongIds.has(playingSong.trackId) ? 'liked' : ''}`}
+                title="Like"
                 onClick={() => handleFeedback(playingSong, 'LIKE')}
               >
                 {likedSongIds.has(playingSong.trackId) ? '💚' : '♡'}
+              </button>
+              <button 
+                type="button" 
+                className={`player-dislike-btn ${dislikedSongIds.has(playingSong.trackId) ? 'active' : ''}`}
+                title="Dislike"
+                onClick={() => handleFeedback(playingSong, 'DISLIKE')}
+              >
+                {dislikedSongIds.has(playingSong.trackId) ? '🚫' : '👎'}
               </button>
             </>
           ) : (
@@ -1212,6 +1399,91 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* 4. AUTH MODAL */}
+      {authModalOpen && (
+        <div className="modal-overlay" onClick={() => setAuthModalOpen(null)}>
+          <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
+            <button 
+              type="button" 
+              className="auth-modal-close"
+              onClick={() => setAuthModalOpen(null)}
+            >
+              ✕
+            </button>
+            
+            <h2>{authModalOpen === 'login' ? 'Sign In' : 'Create Account'}</h2>
+            
+            {authError && <p className="auth-error-msg">{authError}</p>}
+            
+            <form onSubmit={authModalOpen === 'login' ? handleAuthLogin : handleAuthRegister} className="auth-form">
+              <div className="form-group">
+                <label>Username</label>
+                <input 
+                  type="text" 
+                  required
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  placeholder="Enter username"
+                />
+              </div>
+              
+              {authModalOpen === 'register' && (
+                <>
+                  <div className="form-group">
+                    <label>Email Address</label>
+                    <input 
+                      type="email" 
+                      required
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      placeholder="Enter email"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Full Name</label>
+                    <input 
+                      type="text" 
+                      value={authFullName}
+                      onChange={(e) => setAuthFullName(e.target.value)}
+                      placeholder="Enter full name"
+                    />
+                  </div>
+                </>
+              )}
+              
+              <div className="form-group">
+                <label>Password</label>
+                <input 
+                  type="password" 
+                  required
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </div>
+              
+              <button type="submit" className="auth-submit-btn">
+                {authModalOpen === 'login' ? 'Sign In' : 'Sign Up'}
+              </button>
+            </form>
+            
+            <p className="auth-toggle-text">
+              {authModalOpen === 'login' ? "Don't have an account?" : "Already have an account?"}
+              <button 
+                type="button" 
+                className="auth-toggle-link"
+                onClick={() => {
+                  setAuthError('')
+                  setAuthModalOpen(authModalOpen === 'login' ? 'register' : 'login')
+                }}
+              >
+                {authModalOpen === 'login' ? 'Sign Up' : 'Sign In'}
+              </button>
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

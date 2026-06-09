@@ -18,15 +18,15 @@
 
 #### b) Về thuật toán khuyến nghị
 - ✅ **Đã hoàn thành:** Content-based filtering sử dụng cosine similarity trên Spotify dataset
-- **Yêu cầu:** Đánh giá độ chính xác của model (Precision@10, Recall@10, NDCG)
-- **Gợi ý:** Xem xét kết hợp collaborative filtering nếu có user interaction data
-- **Gợi ý:** So sánh kết quả giữa content-based vs hybrid approach
+- ✅ **Đã hoàn thành:** Tích hợp Lọc cộng tác (Collaborative Filtering) sử dụng dữ liệu tương tác Last.fm
+- ✅ **Đã hoàn thành:** Thuật toán lai ghép (Hybrid Approach) kết hợp Content-Based và Lọc cộng tác, tự động bổ sung theo trọng số.
+- ✅ **Đã hoàn thành:** Thiết lập các chỉ số đánh giá độ chính xác của mô hình (Precision@10, Recall@10, NDCG@10) qua tập kiểm thử ẩn Last.fm, so sánh hiệu năng các phương pháp (kết quả tại [EVALUATION_REPORT.md](file:///d:/TaiLieuHoc/TTCS/WebsiteMusic/music-recommender/EVALUATION_REPORT.md)).
 
 #### c) Về giao diện người dùng
 - ✅ **Đã hoàn thành:** UI cơ bản với tính năng search song
-- **Cần cải thiện:** Hiển thị chi tiết về lý do khuyến nghị (recommendation explanation)
-- **Cần cải thiện:** Thêm user feedback (like/dislike) để cải thiện model theo thời gian
-- **Gợi ý:** Thêm visualization cho audio features (danceability, energy, etc.)
+- ✅ **Đã hoàn thành:** Hiển thị chi tiết về lý do khuyến nghị (recommendation explanation) trực quan trên bảng gợi ý.
+- ✅ **Đã hoàn thành:** Thêm tương tác user feedback (like/dislike) thời gian thực, lưu MySQL, đồng bộ FastAPI và làm mới gợi ý tức thời.
+- ✅ **Đã hoàn thành:** Hiển thị biểu đồ trực quan hóa đặc trưng âm học (Acoustic Signature: danceability, energy, tempo...) cho bài hát đang chọn.
 
 #### d) Về quản lý dữ liệu
 - ✅ **Đã hoàn thành:** Load dataset từ CSV và tích hợp database
